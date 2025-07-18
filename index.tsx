@@ -154,6 +154,34 @@ const parseTextToChapters = (content: string): Chapter[] => {
 
 // --- Components ---
 
+const ApiKeyModal = ({ onSave }) => {
+    const [inputKey, setInputKey] = useState('');
+
+    const handleSave = () => {
+        if (inputKey.trim()) {
+            onSave(inputKey.trim());
+        }
+    };
+
+    return (
+        <div className="api-key-modal-overlay">
+            <div className="api-key-modal">
+                <h2>设置 API 密钥</h2>
+                <p>要使用 AI 辅助功能，请输入您的 Google AI API 密钥。您可以从 Google AI Studio 获取。</p>
+                <input
+                    type="password"
+                    value={inputKey}
+                    onChange={(e) => setInputKey(e.target.value)}
+                    placeholder="在此输入您的 API 密钥"
+                    aria-label="API Key Input"
+                />
+                <button onClick={handleSave}>保存并开始</button>
+            </div>
+        </div>
+    );
+};
+
+
 const ContextMenuComponent = ({ menu, onSelectDelete }) => {
     if (!menu) return null;
 
@@ -166,7 +194,7 @@ const ContextMenuComponent = ({ menu, onSelectDelete }) => {
     );
 };
 
-const BookshelfView = ({ books, onSelectBook, onImportBook, onShowContextMenu }) => {
+const BookshelfView = ({ books, onSelectBook, onImportBook, onShowContextMenu, onSetApiKey, isApiKeySet }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleImportBookClick = () => {
@@ -186,6 +214,12 @@ const BookshelfView = ({ books, onSelectBook, onImportBook, onShowContextMenu })
             <header className="bookshelf-header">
                  <h1>我的书架</h1>
                  <p>导入或选择一本书开始阅读</p>
+                 {!isApiKeySet && (
+                    <div className="api-key-prompt">
+                        <p>AI 功能已禁用。</p>
+                        <button onClick={onSetApiKey}>设置 API 密钥</button>
+                    </div>
+                 )}
             </header>
             <main>
                 <div className="bookshelf-grid">
@@ -569,7 +603,10 @@ const ReaderView = ({ book, onBack, onBookUpdate, theme, onThemeChange, typograp
     };
 
     const handleAiAction = async (action: 'summarize' | 'explain' | 'translate', payload: { text: string; range?: Range; context?: any}) => {
-        if (!ai) return;
+        if (!ai) {
+            alert("请先设置 API 密钥以启用 AI 功能。");
+            return;
+        }
 
         setSelectionPopup(null);
         if(payload.range) {
@@ -611,7 +648,7 @@ const ReaderView = ({ book, onBack, onBookUpdate, theme, onThemeChange, typograp
 
         } catch (err) {
             console.error("AI action failed:", err);
-            const errorMsg = "AI 处理时发生错误。";
+            const errorMsg = "AI 处理时发生错误。请检查您的 API 密钥或网络连接。";
             if (action === 'summarize') {
                 setChapterSummary({ isLoading: false, content: null, error: errorMsg });
             } else {
@@ -870,15 +907,26 @@ const App = () => {
         const savedSettings = localStorage.getItem('reader-typography');
         return savedSettings ? JSON.parse(savedSettings) : { fontSize: 18, lineHeight: 1.9, fontFamily: 'sans-serif' };
     });
+    const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini-api-key') || '');
+    const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
     const aiRef = useRef<GoogleGenAI | null>(null);
 
     useEffect(() => {
-        if (process.env.API_KEY) {
-            aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        } else {
-            console.warn("API_KEY environment variable not set. AI features will be disabled.");
+        if (!apiKey) {
+            setIsApiKeyModalOpen(true);
+        } else if (aiRef.current === null) {
+            try {
+                aiRef.current = new GoogleGenAI({ apiKey });
+                setIsApiKeyModalOpen(false);
+            } catch (error) {
+                console.error("Failed to initialize GoogleGenAI:", error);
+                alert("无效的 API 密钥。请重新输入。");
+                localStorage.removeItem('gemini-api-key');
+                setApiKey('');
+                setIsApiKeyModalOpen(true);
+            }
         }
-    }, []);
+    }, [apiKey]);
 
     useEffect(() => {
         db.getBooks().then(setBooks);
@@ -889,6 +937,12 @@ const App = () => {
     useEffect(() => {
         localStorage.setItem('reader-typography', JSON.stringify(typography));
     }, [typography]);
+
+    const handleSaveApiKey = (newKey: string) => {
+        localStorage.setItem('gemini-api-key', newKey);
+        setApiKey(newKey);
+        setIsApiKeyModalOpen(false);
+    };
 
     const handleImportBook = (file: File) => {
         const reader = new FileReader();
@@ -985,11 +1039,14 @@ const App = () => {
 
     return (
         <>
+            {isApiKeyModalOpen && <ApiKeyModal onSave={handleSaveApiKey} />}
             <BookshelfView
                 books={books}
                 onSelectBook={setSelectedBook}
                 onImportBook={handleImportBook}
                 onShowContextMenu={handleShowContextMenu}
+                isApiKeySet={!!apiKey}
+                onSetApiKey={() => setIsApiKeyModalOpen(true)}
             />
             <ContextMenuComponent menu={contextMenu} onSelectDelete={handleDeleteBook} />
         </>
